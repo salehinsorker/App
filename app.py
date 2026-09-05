@@ -126,10 +126,18 @@ with st.sidebar:
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             splits = text_splitter.split_documents(docs)
 
-            embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/text-embedding-004", 
-                google_api_key=gemini_api_key
-            )
+                        # Safe Embeddings setup
+            try:
+                embeddings = GoogleGenerativeAIEmbeddings(
+                    model="models/text-embedding-004", 
+                    google_api_key=gemini_api_key
+                )
+            except Exception:
+                embeddings = GoogleGenerativeAIEmbeddings(
+                    model="models/embedding-001", 
+                    google_api_key=gemini_api_key
+                )
+
             vectorstore = FAISS.from_documents(splits, embeddings)
             vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
