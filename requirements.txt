@@ -1,0 +1,11 @@
+streamlit
+langchain
+langchain-google-genai
+google-generativeai
+langchain-community
+faiss-cpu
+pypdf
+rank_bm25
+pymupdf
+fpdf2
+pillow
