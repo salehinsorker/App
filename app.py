@@ -6,7 +6,6 @@ from PIL import Image
 from fpdf import FPDF
 import google.generativeai as genai
 from typing import List
-
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -17,8 +16,14 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+try:
+    from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+except ModuleNotFoundError:
+    from langchain.chains.history_aware_retriever import create_history_aware_retriever
+    from langchain.chains.retrieval import create_retrieval_chain
+
 from langchain.chains.combine_documents import create_stuff_documents_chain
+
 
 # --- Custom Bulletproof Hybrid Retriever (No Import Errors) ---
 class CustomHybridRetriever(BaseRetriever):
