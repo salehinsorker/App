@@ -122,25 +122,35 @@ with st.sidebar:
                 st.session_state.pdf_path = tmp_file.name
 
             loader = PyPDFLoader(st.session_state.pdf_path)
+                        loader = PyPDFLoader(st.session_state.pdf_path)
             docs = loader.load()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             splits = text_splitter.split_documents(docs)
-            # Clean API key & robust Embedding setup
-            clean_api_key = gemini_api_key.strip()
-            
-            try:
-                embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004", 
-                    google_api_key=clean_api_key,
-                    task_type="retrieval_document"
-                )
-            except Exception:
-                embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/embedding-001", 
-                    google_api_key=clean_api_key
-                )
-            vectorstore = FAISS.from_documents(splits, embeddings)
-            vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+            # ১. খালি বা ফাঁকা চ্যাঙ্ক ফিল্টার করা (খালি টেক্সট থাকলে API ফেল করে)
+            splits = [doc for doc in splits if doc.page_content and doc.page_content.strip()]
+
+            if not splits:
+                st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
+            else:
+                clean_api_key = gemini_api_key.strip()
+                
+                # ২. FAISS তৈরির সময় ফলব্যাক এম্বেডিং প্রয়োগ
+                try:
+                    embeddings = GoogleGenerativeAIEmbeddings(
+                        model="models/text-embedding-004", 
+                        google_api_key=clean_api_key
+                    )
+                    vectorstore = FAISS.from_documents(splits, embeddings)
+                except Exception:
+                    embeddings = GoogleGenerativeAIEmbeddings(
+                        model="models/embedding-001", 
+                        google_api_key=clean_api_key
+                    )
+                    vectorstore = FAISS.from_documents(splits, embeddings)
+
+                vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
 
             bm25_retriever = BM25Retriever.from_documents(splits)
             bm25_retriever.k = 3
