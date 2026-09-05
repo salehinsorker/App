@@ -90,12 +90,23 @@ def generate_simple_pdf(text_content: str) -> io.BytesIO:
 # --- Helper 3: Vision Question Extraction ---
 def extract_question_from_image(pil_image, api_key: str) -> str:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content([
-        "Extract the exact question, problem, or main subject from this image clearly into plain text.",
-        pil_image
-    ])
-    return response.text
+    
+    # Models to try if one fails
+    model_names = ['models/gemini-1.5-flash', 'gemini-1.5-flash-latest', 'models/gemini-2.0-flash']
+    
+    for model_name in model_names:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([
+                "Extract the exact question, problem, or main subject from this image clearly into plain text.",
+                pil_image
+            ])
+            return response.text
+        except Exception:
+            continue
+            
+    return "ছবি থেকে টেক্সট বের করা সম্ভব হয়নি। দয়া করে ম্যানুয়ালি প্রশ্নটি টাইপ করুন।"
+
 
 # --- Sidebar Setup ---
 with st.sidebar:
