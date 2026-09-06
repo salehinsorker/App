@@ -1,15 +1,17 @@
 import tempfile
 import io
+import base64
 import fitz  # PyMuPDF
 import streamlit as st
 from PIL import Image
 from fpdf import FPDF
-import google.generativeai as genai
+import openai
 from typing import List
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -17,7 +19,6 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from langchain_core.embeddings import Embeddings
 
 try:
     from langchain.chains import create_history_aware_retriever, create_retrieval_chain
@@ -27,31 +28,10 @@ except ModuleNotFoundError:
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
-# --- Custom Gemini Native Embeddings Wrapper ---
-class CustomGeminiEmbeddings(Embeddings):
-    def __init__(self, api_key: str, model_name: str = "models/text-embedding-004"):
-        self.api_key = api_key.strip()
-        self.model_name = model_name
-        genai.configure(api_key=self.api_key)
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        embeddings = []
-        for text in texts:
-            res = genai.embed_content(
-                model=self.model_name,
-                content=text,
-                task_type="retrieval_document"
-            )
-            embeddings.append(res['embedding'])
-        return embeddings
-
-    def embed_query(self, text: str) -> List[float]:
-        res = genai.embed_content(
-            model=self.model_name,
-            content=text,
-            task_type="retrieval_query"
-        )
-        return res['embedding']
+# --- Caching local CPU embedding model for 0-cost vectors ---
+@st.cache_resource
+def load_local_embeddings():
+    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-2")
 
 # --- Custom Bulletproof Hybrid Retriever ---
 class CustomHybridRetriever(BaseRetriever):
@@ -71,8 +51,8 @@ class CustomHybridRetriever(BaseRetriever):
         return unique_docs[:4]
 
 # --- Streamlit UI Config ---
-st.set_page_config(page_title="Free Gemini Multimodal RAG", page_icon="✨", layout="wide")
-st.title("✨ Free Multimodal Hybrid RAG Agent (Powered by Gemini API)")
+st.set_page_config(page_title="Free OpenAI Multimodal RAG", page_icon="✨", layout="wide")
+st.title("✨ Free Multimodal Hybrid RAG Agent (Powered by OpenAI API)")
 
 # --- Session State Initialization ---
 if "rag_chain" not in st.session_state:
@@ -115,33 +95,43 @@ def generate_simple_pdf(text_content: str) -> io.BytesIO:
     buffer.seek(0)
     return buffer
 
-# --- Helper 3: Vision Question Extraction ---
+# --- Helper 3: Vision Question Extraction (OpenAI gpt-4o-mini) ---
 def extract_question_from_image(pil_image, api_key: str) -> str:
-    genai.configure(api_key=api_key)
-    model_names = ['models/gemini-1.5-flash', 'gemini-1.5-flash-latest', 'models/gemini-2.0-flash']
-    
-    for model_name in model_names:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content([
-                "Extract the exact question, problem, or main subject from this image clearly into plain text.",
-                pil_image
-            ])
-            return response.text
-        except Exception:
-            continue
-            
-    return "ছবি থেকে টেক্সট বের করা সম্ভব হয়নি। দয়া করে ম্যানুয়ালি প্রশ্নটি টাইপ করুন।"
+    try:
+        buffered = io.BytesIO()
+        pil_image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        
+        client = openai.OpenAI(api_key=api_key.strip())
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract the exact question, problem, or main subject from this image clearly into plain text."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_str}"}
+                        }
+                    ]
+                }
+            ],
+            max_tokens=300
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"ছবি পড়তে সমস্যা হয়েছে: {str(e)}"
 
 # --- Sidebar Setup ---
 with st.sidebar:
-    st.header("🔑 ১. ফ্রি API Key ও PDF আপলোড")
-    gemini_api_key = st.text_input("Google Gemini API Key দিন", type="password")
+    st.header("🔑 ১. OpenAI API Key ও PDF আপলোড")
+    openai_api_key = st.text_input("OpenAI API Key দিন (sk-...)", type="password")
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
     
-    if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
-        with st.spinner("PDF প্রসেস করা হচ্ছে..."):
+    if uploaded_pdf and openai_api_key and st.button("PDF প্রসেস করুন"):
+        with st.spinner("PDF প্রসেস করা হচ্ছে (Local Embedding)..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_pdf.read())
                 st.session_state.pdf_path = tmp_file.name
@@ -163,59 +153,45 @@ with st.sidebar:
             if not cleaned_splits:
                 st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
             else:
-                clean_api_key = gemini_api_key.strip()
-                embeddings = None
-                errors_log = []
+                clean_api_key = openai_api_key.strip()
                 
-                candidate_models = ["models/text-embedding-004", "models/embedding-001"]
+                # ১. লোকাল CPU এম্বেডিং লোড (OpenAI Token নষ্ট হবে না)
+                embeddings = load_local_embeddings()
                 
-                for m_name in candidate_models:
-                    try:
-                        emb_test = CustomGeminiEmbeddings(api_key=clean_api_key, model_name=m_name)
-                        emb_test.embed_query("test query")
-                        embeddings = emb_test
-                        break
-                    except Exception as err:
-                        errors_log.append(f"{m_name}: {str(err)}")
+                # ২. Vector/BM25 Indexing
+                vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
+                vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-                if embeddings is None:
-                    st.error("❌ কোনো এম্বেডিং মডেল দিয়ে সংযোগ স্থাপন করা যায়নি। বিস্তারিত এরর:")
-                    for err_msg in errors_log:
-                        st.caption(f"• {err_msg}")
-                    st.warning("👉 দয়া করে [Google AI Studio](https://aistudio.google.com/) থেকে একটি নতুন API Key তৈরি করে চেষ্টা করুন।")
-                else:
-                    vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
-                    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+                bm25_retriever = BM25Retriever.from_documents(cleaned_splits)
+                bm25_retriever.k = 3
 
-                    bm25_retriever = BM25Retriever.from_documents(cleaned_splits)
-                    bm25_retriever.k = 3
+                hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                    hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
+                # ৩. OpenAI gpt-4o-mini LLM Integration
+                llm = ChatOpenAI(
+                    model="gpt-4o-mini", 
+                    openai_api_key=clean_api_key,
+                    temperature=0
+                )
 
-                    llm = ChatGoogleGenerativeAI(
-                        model="gemini-1.5-flash", 
-                        google_api_key=clean_api_key,
-                        temperature=0
-                    )
+                context_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
+                    MessagesPlaceholder("chat_history"),
+                    ("human", "{input}"),
+                ])
+                history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
 
-                    context_prompt = ChatPromptTemplate.from_messages([
-                        ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
-                        MessagesPlaceholder("chat_history"),
-                        ("human", "{input}"),
-                    ])
-                    history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
-
-                    qa_prompt = ChatPromptTemplate.from_messages([
-                        ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
-                        MessagesPlaceholder("chat_history"),
-                        ("human", "{input}"),
-                    ])
-                    
-                    qa_chain = create_stuff_documents_chain(llm, qa_prompt)
-                    st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-                    st.session_state.messages = []
-                    st.session_state.chat_history = []
-                    st.success("Indexing সফল হয়েছে!")
+                qa_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
+                    MessagesPlaceholder("chat_history"),
+                    ("human", "{input}"),
+                ])
+                
+                qa_chain = create_stuff_documents_chain(llm, qa_prompt)
+                st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                st.session_state.messages = []
+                st.session_state.chat_history = []
+                st.success("Indexing সফল হয়েছে!")
 
 # --- Main Interface ---
 st.subheader("২. আপনার প্রশ্ন প্রদান করুন")
@@ -228,11 +204,11 @@ if uploaded_img:
     st.image(pil_img, caption="আপলোডকৃত ছবি", width=250)
     
     if st.button("ছবি থেকে প্রশ্ন বের করুন"):
-        if not gemini_api_key:
-            st.error("দয়া করে সাইডবারে Gemini API Key দিন।")
+        if not openai_api_key:
+            st.error("দয়া করে সাইডবারে OpenAI API Key দিন।")
         else:
-            with st.spinner("Gemini Vision দিয়ে ছবি পড়া হচ্ছে..."):
-                extracted_image_question = extract_question_from_image(pil_img, gemini_api_key)
+            with st.spinner("OpenAI Vision দিয়ে ছবি পড়া হচ্ছে..."):
+                extracted_image_question = extract_question_from_image(pil_img, openai_api_key)
                 st.info(f"📷 **ছবি থেকে সংগৃহীত প্রশ্ন:** {extracted_image_question}")
 
 for msg in st.session_state.messages:
@@ -243,8 +219,8 @@ user_input = st.chat_input("আপনার প্রশ্নটি এখা�
 query = user_input or (extracted_image_question if uploaded_img else None)
 
 if query:
-    if not gemini_api_key:
-        st.error("দয়া করে সাইডবারে Gemini API Key প্রদান করুন।")
+    if not openai_api_key:
+        st.error("দয়া করে সাইডবারে OpenAI API Key প্রদান করুন।")
     elif st.session_state.rag_chain is None:
         st.warning("দয়া করে সাইডবার থেকে প্রথমে একটি PDF প্রসেস করুন।")
     else:
@@ -284,4 +260,3 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-        
