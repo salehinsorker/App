@@ -153,7 +153,6 @@ with st.sidebar:
                     vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
                     vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-
                 bm25_retriever = BM25Retriever.from_documents(splits)
                 bm25_retriever.k = 3
 
