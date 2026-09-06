@@ -1,303 +1,120 @@
 import tempfile
-import io
-import base64
-import os
-import urllib.request
-import fitz  # PyMuPDF
 import streamlit as st
-from PIL import Image
-from fpdf import FPDF
-import groq
-from typing import List
-
-from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.retrievers import BM25Retriever
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.retrievers import BaseRetriever
-from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 
-# --- Caching local CPU embedding model ---
+# --- Local Embedding Model Load ---
 @st.cache_resource
-def load_local_embeddings():
+def load_embeddings():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# --- Custom Hybrid Retriever ---
-class CustomHybridRetriever(BaseRetriever):
-    retrievers: List[BaseRetriever]
-    
-    def _get_relevant_documents(self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None) -> List[Document]:
-        combined_docs = []
-        for retriever in self.retrievers:
-            combined_docs.extend(retriever.invoke(query))
-        
-        seen = set()
-        unique_docs = []
-        for doc in combined_docs:
-            if doc.page_content not in seen:
-                seen.add(doc.page_content)
-                unique_docs.append(doc)
-        return unique_docs[:4]
+# --- Streamlit Setup ---
+st.set_page_config(page_title="Simple PDF Q&A", page_icon="📄", layout="wide")
+st.title("📄 PDF Question Generator & Chat Agent")
 
-# --- Streamlit UI Config ---
-st.set_page_config(page_title="Free Groq Multimodal RAG", page_icon="⚡", layout="wide")
-st.title("⚡ Free Multimodal Hybrid RAG Agent (Powered by Groq API)")
-
-# --- Session State Initialization ---
-if "rag_pipeline" not in st.session_state:
-    st.session_state.rag_pipeline = None
-if "pdf_path" not in st.session_state:
-    st.session_state.pdf_path = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --- Session State ---
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# --- Helper 1: Extract Diagrams ---
-def extract_diagrams_from_page(pdf_path: str, page_number: int):
-    try:
-        doc = fitz.open(pdf_path)
-        page = doc[page_number]
-        image_list = page.get_images(full=True)
-        images = []
-        for img_info in image_list:
-            xref = img_info[0]
-            base_image = doc.extract_image(xref)
-            image_bytes = base_image["image"]
-            images.append(Image.open(io.BytesIO(image_bytes)))
-        return images
-    except Exception:
-        return []
-
-# --- Helper 2: Generate PDF (Unicode/Bengali Support) ---
-def generate_simple_pdf(text_content: str) -> io.BytesIO:
-    pdf = FPDF()
-    pdf.add_page()
-    
-    font_path = "Kalpurush.ttf"
-    if not os.path.exists(font_path):
-        try:
-            font_url = "https://raw.githubusercontent.com/maateen/kalpurush/master/Kalpurush.ttf"
-            urllib.request.urlretrieve(font_url, font_path)
-        except Exception:
-            pass
-
-    if os.path.exists(font_path):
-        pdf.add_font("Kalpurush", fname=font_path)
-        pdf.set_font("Kalpurush", size=12)
-        pdf.cell(0, 10, "AI RAG Response Report", ln=True, align="C")
-        pdf.ln(5)
-        pdf.multi_cell(0, 8, txt=text_content)
-    else:
-        pdf.set_font("Helvetica", size=10)
-        pdf.cell(0, 10, "AI RAG Response Report", ln=True, align="C")
-        pdf.ln(5)
-        clean_text = text_content.encode("latin-1", "replace").decode("latin-1")
-        pdf.multi_cell(0, 6, txt=clean_text)
-    
-    buffer = io.BytesIO()
-    buffer.write(pdf.output())
-    buffer.seek(0)
-    return buffer
-
-# --- Helper 3: Vision Question Extraction (Active Groq Vision Model) ---
-def extract_question_from_image(pil_image, api_key: str) -> str:
-    try:
-        buffered = io.BytesIO()
-        pil_image.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        
-        client = groq.Groq(api_key=api_key.strip())
-        response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-instruct",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Extract the exact question, problem, or main subject from this image clearly into plain text."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_str}"}
-                        }
-                    ]
-                }
-            ],
-            max_tokens=300
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"ছবি পড়তে সমস্যা হয়েছে: {str(e)}"
-
-# --- Sidebar Setup ---
+# --- Sidebar ---
 with st.sidebar:
-    st.header("🔑 ১. Groq API Key ও PDF আপলোড")
-    groq_api_key = st.text_input("Groq API Key দিন (gsk-...)", type="password")
+    st.header("🔑 ১. সেটিংসে তথ্য দিন")
+    groq_api_key = st.text_input("Groq API Key (gsk-...)", type="password")
+    
+    # Model Selection Dropdown
+    selected_model = st.selectbox(
+        "Groq Model নির্বাচন করুন",
+        ["llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"]
+    )
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
-    
-    if uploaded_pdf and groq_api_key and st.button("PDF প্রসেস করুন"):
-        with st.spinner("PDF প্রসেস করা হচ্ছে (Local Embedding)..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                tmp_file.write(uploaded_pdf.read())
-                st.session_state.pdf_path = tmp_file.name
 
-            loader = PyMuPDFLoader(st.session_state.pdf_path)
+    if uploaded_pdf and groq_api_key and st.button("PDF প্রসেস করুন"):
+        with st.spinner("PDF পড়া হচ্ছে..."):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_pdf.read())
+                tmp_path = tmp.name
+
+            loader = PyPDFLoader(tmp_path)
             docs = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=100)
             splits = text_splitter.split_documents(docs)
 
-            cleaned_splits = []
-            if splits:
-                for doc in splits:
-                    text = doc.page_content.strip() if doc.page_content else ""
-                    if text:
-                        clean_text = text.encode("utf-8", "ignore").decode("utf-8")
-                        doc.page_content = clean_text
-                        cleaned_splits.append(doc)
+            embeddings = load_embeddings()
+            vectorstore = FAISS.from_documents(splits, embeddings)
+            st.session_state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-            if not cleaned_splits:
-                st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
-            else:
-                clean_api_key = groq_api_key.strip()
-                
-                embeddings = load_local_embeddings()
-                
-                vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
-                vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-
-                bm25_retriever = BM25Retriever.from_documents(cleaned_splits)
-                bm25_retriever.k = 3
-
-                hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
-
-                # Active Groq Text Model
-                llm = ChatGroq(
-                    model="llama-3.3-70b-versatile", 
-                    groq_api_key=clean_api_key,
-                    temperature=0,
-                    max_retries=3
-                )
-
-                rephrase_system_prompt = (
-                    "Given a chat history and the latest user question "
-                    "which might reference context in the chat history, "
-                    "formulate a standalone question. Do NOT answer the question, "
-                    "just rephrase it if needed or return it as is."
-                )
-                rephrase_prompt = ChatPromptTemplate.from_messages([
-                    ("system", rephrase_system_prompt),
-                    MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{input}"),
-                ])
-                rephrase_chain = rephrase_prompt | llm | StrOutputParser()
-
-                qa_system_prompt = (
-                    "Answer the question using ONLY the provided context below. "
-                    "If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n"
-                    "{context}"
-                )
-                qa_prompt = ChatPromptTemplate.from_messages([
-                    ("system", qa_system_prompt),
-                    MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{input}"),
-                ])
-                qa_chain = qa_prompt | llm | StrOutputParser()
-
-                def run_rag_pipeline(query_text: str, history: List):
-                    try:
-                        if history:
-                            standalone_q = rephrase_chain.invoke({"input": query_text, "chat_history": history})
-                        else:
-                            standalone_q = query_text
-                        
-                        retrieved_docs = hybrid_retriever.invoke(standalone_q)
-                        context_str = "\n\n".join(d.page_content for d in retrieved_docs)
-                        
-                        answer_text = qa_chain.invoke({
-                            "context": context_str,
-                            "chat_history": history,
-                            "input": query_text
-                        })
-                        return {"answer": answer_text, "context": retrieved_docs}
-                    except Exception as e:
-                        return {
-                            "answer": f"⚠️ Groq API থেকে উত্তর আনতে সমস্যা হয়েছে। কারণ: {str(e)}\n\nদয়া করে কিছুক্ষণ পর আবার চেষ্টা করুন।",
-                            "context": []
-                        }
-
-                st.session_state.rag_pipeline = run_rag_pipeline
-                st.session_state.messages = []
-                st.session_state.chat_history = []
-                st.success("Indexing সফল হয়েছে!")
+            st.session_state.messages = []
+            st.session_state.chat_history = []
+            st.success("PDF প্রসেসিং সম্পন্ন হয়েছে!")
 
 # --- Main Interface ---
-st.subheader("২. আপনার প্রশ্ন প্রদান করুন")
+if st.session_state.retriever:
+    llm = ChatGroq(
+        model=selected_model,
+        groq_api_key=groq_api_key.strip(),
+        temperature=0.3
+    )
 
-uploaded_img = st.file_uploader("প্রশ্ন সম্বলিত ছবি আপলোড করুন (ঐচ্ছিক)", type=["jpg", "jpeg", "png"])
-extracted_image_question = ""
+    # Auto Question Generation Button
+    if st.button("💡 PDF থেকে ৫টি গুরুত্বপূর্ণ প্রশ্ন বের করুন"):
+        with st.spinner("প্রশ্ন তৈরি করা হচ্ছে..."):
+            docs = st.session_state.retriever.invoke("main topics and key points")
+            context = "\n".join([d.page_content for d in docs])
+            
+            gen_prompt = f"Based on the following text, extract 5 important questions in Bengali that can be answered using this content:\n\n{context}"
+            questions = llm.invoke(gen_prompt).content
+            st.info(f"**PDF থেকে সম্ভাব্য প্রশ্নসমূহ:**\n\n{questions}")
 
-if uploaded_img:
-    pil_img = Image.open(uploaded_img)
-    st.image(pil_img, caption="আপলোডকৃত ছবি", width=250)
-    
-    if st.button("ছবি থেকে প্রশ্ন বের করুন"):
-        if not groq_api_key:
-            st.error("দয়া করে সাইডবারে Groq API Key দিন।")
-        else:
-            with st.spinner("Groq Vision দিয়ে ছবি পড়া হচ্ছে..."):
-                extracted_image_question = extract_question_from_image(pil_img, groq_api_key)
-                st.info(f"📷 **ছবি থেকে সংগৃহীত প্রশ্ন:** {extracted_image_question}")
+    st.divider()
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    # Chat UI
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-user_input = st.chat_input("আপনার প্রশ্নটি এখানে লিখুন...")
-query = user_input or (extracted_image_question if uploaded_img else None)
+    user_query = st.chat_input("PDF সম্পর্কে প্রশ্ন করুন...")
 
-if query:
-    if not groq_api_key:
-        st.error("দয়া করে সাইডবারে Groq API Key প্রদান করুন।")
-    elif st.session_state.rag_pipeline is None:
-        st.warning("দয়া করে সাইডবার থেকে প্রথমে একটি PDF প্রসেস করুন।")
-    else:
-        st.chat_message("user").markdown(query)
-        st.session_state.messages.append({"role": "user", "content": query})
+    if user_query:
+        st.chat_message("user").markdown(user_query)
+        st.session_state.messages.append({"role": "user", "content": user_query})
 
-        with st.spinner("PDF থেকে উত্তর খোঁজা হচ্ছে..."):
-            response = st.session_state.rag_pipeline(query, st.session_state.chat_history)
-            answer = response["answer"]
+        with st.spinner("উত্তর খোঁজা হচ্ছে..."):
+            retrieved_docs = st.session_state.retriever.invoke(user_query)
+            context_str = "\n\n".join([d.page_content for d in retrieved_docs])
+
+            qa_prompt = ChatPromptTemplate.from_messages([
+                ("system", "আপনি একজন সহায়ক সহকারী। প্রদত্ত কন্টেন্ট ব্যবহার করে প্রশ্নের উত্তর দিন। যদি উত্তর না থাকে তবে বলুন 'তথ্যটি PDF-এ নেই।'\n\nকন্টেন্ট:\n{context}"),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}")
+            ])
+
+            chain = qa_prompt | llm | StrOutputParser()
+            response = chain.invoke({
+                "context": context_str,
+                "chat_history": st.session_state.chat_history,
+                "input": user_query
+            })
 
         with st.chat_message("assistant"):
-            st.markdown(answer)
-            
-            if "context" in response and len(response["context"]) > 0:
-                top_doc = response["context"][0]
-                matched_page = top_doc.metadata.get("page", 0)
-                
-                diagrams = extract_diagrams_from_page(st.session_state.pdf_path, matched_page)
-                if diagrams:
-                    st.markdown("**🖼️ সংশ্লিষ্ট পেজ থেকে এক্সট্র্যাক্ট করা ডায়গ্রাম:**")
-                    for d_img in diagrams:
-                        st.image(d_img, width=400)
-            
-            pdf_out = generate_simple_pdf(answer)
-            st.download_button(
-                label="📥 উত্তরটি PDF হিসেবে ডাউনলোড করুন",
-                data=pdf_out,
-                file_name="AI_Response.pdf",
-                mime="application/pdf"
-            )
+            st.markdown(response)
 
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.session_state.messages.append({"role": "assistant", "content": response})
         st.session_state.chat_history.extend([
-            HumanMessage(content=query),
-            AIMessage(content=answer)
+            HumanMessage(content=user_query),
+            AIMessage(content=response)
         ])
-        
+else:
+    st.info("👈 সাইডবারে Groq API Key দিন এবং একটি PDF আপলোড করে প্রসেস বাটনে ক্লিক করুন।")
+    
