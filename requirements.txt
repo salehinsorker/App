@@ -1,15 +1,8 @@
 streamlit
-PyMuPDF
 pypdf
-fpdf2
-pillow
-torch
-torchvision
 sentence-transformers
 faiss-cpu
-rank_bm25
 langchain-community
 langchain-core
 langchain-text-splitters
 langchain-groq
-groq
