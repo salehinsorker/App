@@ -136,6 +136,7 @@ with st.sidebar:
             if not cleaned_splits:
                 st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
             else:
+                
                 clean_api_key = gemini_api_key.strip()
                 
                                 clean_api_key = gemini_api_key.strip()
