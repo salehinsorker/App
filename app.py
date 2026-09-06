@@ -114,20 +114,18 @@ with st.sidebar:
     gemini_api_key = st.text_input("Google Gemini API Key দিন", type="password")
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
-    
-    if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
+        if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
         with st.spinner("PDF প্রসেস করা হচ্ছে..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_pdf.read())
                 st.session_state.pdf_path = tmp_file.name
 
             loader = PyPDFLoader(st.session_state.pdf_path)
-                        loader = PyPDFLoader(st.session_state.pdf_path)
             docs = loader.load()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             splits = text_splitter.split_documents(docs)
 
-            # ১. খালি বা ফাঁকা চ্যাঙ্ক ফিল্টার করা (খালি টেক্সট থাকলে API ফেল করে)
+            # খালি চ্যাঙ্ক ফিল্টার
             splits = [doc for doc in splits if doc.page_content and doc.page_content.strip()]
 
             if not splits:
@@ -135,7 +133,6 @@ with st.sidebar:
             else:
                 clean_api_key = gemini_api_key.strip()
                 
-                # ২. FAISS তৈরির সময় ফলব্যাক এম্বেডিং প্রয়োগ
                 try:
                     embeddings = GoogleGenerativeAIEmbeddings(
                         model="models/text-embedding-004", 
@@ -151,37 +148,35 @@ with st.sidebar:
 
                 vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
+                bm25_retriever = BM25Retriever.from_documents(splits)
+                bm25_retriever.k = 3
 
-            bm25_retriever = BM25Retriever.from_documents(splits)
-            bm25_retriever.k = 3
+                hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-            hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash", 
+                    google_api_key=clean_api_key,
+                    temperature=0
+                )
 
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash", 
-                google_api_key=gemini_api_key,
-                temperature=0
-            )
+                context_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
+                    MessagesPlaceholder("chat_history"),
+                    ("human", "{input}"),
+                ])
+                history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
 
-            context_prompt = ChatPromptTemplate.from_messages([
-                ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ])
-            history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
-
-            qa_prompt = ChatPromptTemplate.from_messages([
-                ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ])
-            
-            qa_chain = create_stuff_documents_chain(llm, qa_prompt)
-            st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-            st.session_state.messages = []
-            st.session_state.chat_history = []
-            st.success("Indexing সফল হয়েছে!")
-
+                qa_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
+                    MessagesPlaceholder("chat_history"),
+                    ("human", "{input}"),
+                ])
+                
+                qa_chain = create_stuff_documents_chain(llm, qa_prompt)
+                st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                st.session_state.messages = []
+                st.session_state.chat_history = []
+                st.success("Indexing সফল হয়েছে!")
 # --- Main Interface ---
 st.subheader("২. আপনার প্রশ্ন প্রদান করুন")
 
