@@ -5,9 +5,9 @@ pillow
 sentence-transformers
 faiss-cpu
 rank_bm25
-langchain
-langchain-community
-langchain-core
-langchain-text-splitters
-langchain-openai
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+langchain-text-splitters>=0.2.0
+langchain-openai>=0.1.0
 openai
