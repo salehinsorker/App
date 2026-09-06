@@ -24,7 +24,7 @@ from langchain_core.output_parsers import StrOutputParser
 # --- Caching local CPU embedding model ---
 @st.cache_resource
 def load_local_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-2")
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # --- Custom Hybrid Retriever ---
 class CustomHybridRetriever(BaseRetriever):
