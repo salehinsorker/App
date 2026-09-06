@@ -32,10 +32,14 @@ with st.sidebar:
     st.header("🔑 ১. সেটিংসে তথ্য দিন")
     groq_api_key = st.text_input("Groq API Key (gsk-...)", type="password")
     
-    # Active Groq Models
+    # Universally active models across all Groq API keys
     selected_model = st.selectbox(
         "Groq Model নির্বাচন করুন",
-        ["llama-3.3-70b-versatile", "gemma2-9b-it"]
+        [
+            "llama-3.1-8b-instant",
+            "gemma2-9b-it",
+            "llama-3.3-70b-versatile"
+        ]
     )
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
@@ -43,7 +47,6 @@ with st.sidebar:
     if uploaded_pdf and groq_api_key and st.button("PDF প্রসেস করুন"):
         clean_key = groq_api_key.strip()
         
-        # API Key Format Validation
         if not clean_key.startswith("gsk_"):
             st.error("❌ ভুল API Key! Groq API Key 'gsk_' দিয়ে শুরু হতে হবে। console.groq.com থেকে সঠিক Key দিন।")
         else:
@@ -90,7 +93,9 @@ if st.session_state.retriever:
                 response = llm.invoke(gen_prompt)
                 st.info(f"**PDF থেকে সম্ভাব্য প্রশ্নসমূহ:**\n\n{response.content}")
             except Exception as e:
-                if "AuthenticationError" in str(e) or "401" in str(e):
+                if "404" in str(e):
+                    st.error("❌ এই মডেলটির অ্যাক্সেস আপনার অ্যাকাউন্টে নেই। সাইডবার থেকে 'llama-3.1-8b-instant' সিলেক্ট করুন।")
+                elif "AuthenticationError" in str(e) or "401" in str(e):
                     st.error("❌ API Key ভুল বা নিষ্ক্রিয়! সঠিক Groq API Key প্রদান করুন।")
                 else:
                     st.error(f"সমস্যা হয়েছে: {str(e)}")
@@ -135,7 +140,9 @@ if st.session_state.retriever:
                     AIMessage(content=response)
                 ])
             except Exception as e:
-                if "AuthenticationError" in str(e) or "401" in str(e):
+                if "404" in str(e):
+                    st.error("❌ এই মডেলটির অ্যাক্সেস আপনার অ্যাকাউন্টে নেই। সাইডবার থেকে 'llama-3.1-8b-instant' সিলেক্ট করুন।")
+                elif "AuthenticationError" in str(e) or "401" in str(e):
                     st.error("❌ API Key ভুল বা নিষ্ক্রিয়! সঠিক Groq API Key প্রদান করুন।")
                 else:
                     st.error(f"উত্তর জেনারেট করতে সমস্যা হয়েছে: {str(e)}")
