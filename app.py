@@ -1,6 +1,8 @@
 import tempfile
 import io
 import base64
+import os
+import urllib.request
 import fitz  # PyMuPDF
 import streamlit as st
 from PIL import Image
@@ -73,15 +75,31 @@ def extract_diagrams_from_page(pdf_path: str, page_number: int):
     except Exception:
         return []
 
-# --- Helper 2: Generate PDF ---
+# --- Helper 2: Generate PDF (Unicode/Bengali Support) ---
 def generate_simple_pdf(text_content: str) -> io.BytesIO:
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", style="B", size=14)
-    pdf.cell(0, 10, "AI RAG Response Report", ln=True, align="C")
-    pdf.ln(5)
-    pdf.set_font("Helvetica", size=10)
-    pdf.multi_cell(0, 6, txt=text_content)
+    
+    font_path = "Kalpurush.ttf"
+    if not os.path.exists(font_path):
+        try:
+            font_url = "https://raw.githubusercontent.com/maateen/kalpurush/master/Kalpurush.ttf"
+            urllib.request.urlretrieve(font_url, font_path)
+        except Exception:
+            pass
+
+    if os.path.exists(font_path):
+        pdf.add_font("Kalpurush", fname=font_path)
+        pdf.set_font("Kalpurush", size=12)
+        pdf.cell(0, 10, "AI RAG Response Report", ln=True, align="C")
+        pdf.ln(5)
+        pdf.multi_cell(0, 8, txt=text_content)
+    else:
+        pdf.set_font("Helvetica", size=10)
+        pdf.cell(0, 10, "AI RAG Response Report", ln=True, align="C")
+        pdf.ln(5)
+        clean_text = text_content.encode("latin-1", "replace").decode("latin-1")
+        pdf.multi_cell(0, 6, txt=clean_text)
     
     buffer = io.BytesIO()
     buffer.write(pdf.output())
@@ -158,9 +176,9 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                # High-speed model with max retries to avoid rate limit issues
+                # Groq-এর বর্তমানে অ্যাক্টিভ ও কার্যকরী টেক্সট মডেল
                 llm = ChatGroq(
-                    model="llama-3.1-8b-instant", 
+                    model="llama-3.3-70b-versatile", 
                     groq_api_key=clean_api_key,
                     temperature=0,
                     max_retries=3
@@ -282,4 +300,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-    
+        
