@@ -138,9 +138,9 @@ with st.sidebar:
             else:
                 clean_api_key = gemini_api_key.strip()
                 embeddings = None
+                errors_log = []
                 
-                # কাজ করে এমন Embedding মডেলগুলো পর পর চেক করা
-                candidate_models = ["models/embedding-001", "embedding-001", "text-embedding-004"]
+                candidate_models = ["text-embedding-004", "models/text-embedding-004", "models/embedding-001", "embedding-001"]
                 
                 for m_name in candidate_models:
                     try:
@@ -151,11 +151,14 @@ with st.sidebar:
                         emb_test.embed_query("test query")
                         embeddings = emb_test
                         break
-                    except Exception:
-                        continue
+                    except Exception as err:
+                        errors_log.append(f"{m_name}: {str(err)}")
 
                 if embeddings is None:
-                    st.error("❌ কোনো কার্যকরী Embedding মডেল পাওয়া যায়নি। আপনার API Key যাচাই করুন।")
+                    st.error("❌ কোনো এম্বেডিং মডেল দিয়ে সংযোগ স্থাপন করা যায়নি। বিস্তারিত এরর:")
+                    for err_msg in errors_log:
+                        st.caption(f"• {err_msg}")
+                    st.warning("👉 দয়া করে [Google AI Studio](https://aistudio.google.com/) থেকে একটি নতুন API Key তৈরি করে চেষ্টা করুন।")
                 else:
                     vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
                     vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
@@ -257,4 +260,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-        
+    
