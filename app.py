@@ -6,6 +6,7 @@ from PIL import Image
 from fpdf import FPDF
 import google.generativeai as genai
 from typing import List
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -16,6 +17,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
+
 try:
     from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 except ModuleNotFoundError:
@@ -24,8 +26,7 @@ except ModuleNotFoundError:
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
-
-# --- Custom Bulletproof Hybrid Retriever (No Import Errors) ---
+# --- Custom Bulletproof Hybrid Retriever ---
 class CustomHybridRetriever(BaseRetriever):
     retrievers: List[BaseRetriever]
     
@@ -90,8 +91,6 @@ def generate_simple_pdf(text_content: str) -> io.BytesIO:
 # --- Helper 3: Vision Question Extraction ---
 def extract_question_from_image(pil_image, api_key: str) -> str:
     genai.configure(api_key=api_key)
-    
-    # Models to try if one fails
     model_names = ['models/gemini-1.5-flash', 'gemini-1.5-flash-latest', 'models/gemini-2.0-flash']
     
     for model_name in model_names:
@@ -107,14 +106,14 @@ def extract_question_from_image(pil_image, api_key: str) -> str:
             
     return "ছবি থেকে টেক্সট বের করা সম্ভব হয়নি। দয়া করে ম্যানুয়ালি প্রশ্নটি টাইপ করুন।"
 
-
 # --- Sidebar Setup ---
 with st.sidebar:
     st.header("🔑 ১. ফ্রি API Key ও PDF আপলোড")
     gemini_api_key = st.text_input("Google Gemini API Key দিন", type="password")
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
-        if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
+    
+    if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
         with st.spinner("PDF প্রসেস করা হচ্ছে..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_pdf.read())
@@ -125,7 +124,6 @@ with st.sidebar:
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             splits = text_splitter.split_documents(docs)
 
-            # খালি চ্যাঙ্ক ফিল্টার
             splits = [doc for doc in splits if doc.page_content and doc.page_content.strip()]
 
             if not splits:
@@ -177,6 +175,7 @@ with st.sidebar:
                 st.session_state.messages = []
                 st.session_state.chat_history = []
                 st.success("Indexing সফল হয়েছে!")
+
 # --- Main Interface ---
 st.subheader("২. আপনার প্রশ্ন প্রদান করুন")
 
@@ -244,4 +243,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-                                
+        
