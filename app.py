@@ -19,17 +19,14 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-
-# Clean LangChain 0.2+ / 0.3+ Chain Imports
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.output_parsers import StrOutputParser
 
 # --- Caching local CPU embedding model ---
 @st.cache_resource
 def load_local_embeddings():
     return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-2")
 
-# --- Custom Bulletproof Hybrid Retriever ---
+# --- Custom Hybrid Retriever ---
 class CustomHybridRetriever(BaseRetriever):
     retrievers: List[BaseRetriever]
     
@@ -51,8 +48,8 @@ st.set_page_config(page_title="Free OpenAI Multimodal RAG", page_icon="✨", lay
 st.title("✨ Free Multimodal Hybrid RAG Agent (Powered by OpenAI API)")
 
 # --- Session State Initialization ---
-if "rag_chain" not in st.session_state:
-    st.session_state.rag_chain = None
+if "rag_pipeline" not in st.session_state:
+    st.session_state.rag_pipeline = None
 if "pdf_path" not in st.session_state:
     st.session_state.pdf_path = None
 if "messages" not in st.session_state:
@@ -167,21 +164,49 @@ with st.sidebar:
                     temperature=0
                 )
 
-                context_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
-                    MessagesPlaceholder("chat_history"),
+                # Pure LCEL Pipeline (Zero legacy chain dependencies)
+                rephrase_system_prompt = (
+                    "Given a chat history and the latest user question "
+                    "which might reference context in the chat history, "
+                    "formulate a standalone question. Do NOT answer the question, "
+                    "just rephrase it if needed or return it as is."
+                )
+                rephrase_prompt = ChatPromptTemplate.from_messages([
+                    ("system", rephrase_system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
                     ("human", "{input}"),
                 ])
-                history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
+                rephrase_chain = rephrase_prompt | llm | StrOutputParser()
 
+                qa_system_prompt = (
+                    "Answer the question using ONLY the provided context below. "
+                    "If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n"
+                    "{context}"
+                )
                 qa_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
-                    MessagesPlaceholder("chat_history"),
+                    ("system", qa_system_prompt),
+                    MessagesPlaceholder(variable_name="chat_history"),
                     ("human", "{input}"),
                 ])
-                
-                qa_chain = create_stuff_documents_chain(llm, qa_prompt)
-                st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                qa_chain = qa_prompt | llm | StrOutputParser()
+
+                def run_rag_pipeline(query_text: str, history: List):
+                    if history:
+                        standalone_q = rephrase_chain.invoke({"input": query_text, "chat_history": history})
+                    else:
+                        standalone_q = query_text
+                    
+                    retrieved_docs = hybrid_retriever.invoke(standalone_q)
+                    context_str = "\n\n".join(d.page_content for d in retrieved_docs)
+                    
+                    answer_text = qa_chain.invoke({
+                        "context": context_str,
+                        "chat_history": history,
+                        "input": query_text
+                    })
+                    return {"answer": answer_text, "context": retrieved_docs}
+
+                st.session_state.rag_pipeline = run_rag_pipeline
                 st.session_state.messages = []
                 st.session_state.chat_history = []
                 st.success("Indexing সফল হয়েছে!")
@@ -214,17 +239,14 @@ query = user_input or (extracted_image_question if uploaded_img else None)
 if query:
     if not openai_api_key:
         st.error("দয়া করে সাইডবারে OpenAI API Key প্রদান করুন।")
-    elif st.session_state.rag_chain is None:
+    elif st.session_state.rag_pipeline is None:
         st.warning("দয়া করে সাইডবার থেকে প্রথমে একটি PDF প্রসেস করুন।")
     else:
         st.chat_message("user").markdown(query)
         st.session_state.messages.append({"role": "user", "content": query})
 
         with st.spinner("PDF থেকে উত্তর খোঁজা হচ্ছে..."):
-            response = st.session_state.rag_chain.invoke({
-                "input": query,
-                "chat_history": st.session_state.chat_history
-            })
+            response = st.session_state.rag_pipeline(query, st.session_state.chat_history)
             answer = response["answer"]
 
         with st.chat_message("assistant"):
@@ -253,3 +275,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
+    
