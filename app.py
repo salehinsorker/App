@@ -139,18 +139,24 @@ with st.sidebar:
                 clean_api_key = gemini_api_key.strip()
                 embeddings = None
                 
-                # সরাসরি আসল এরর ধরার ব্লক
-                try:
-                    emb_test = GoogleGenerativeAIEmbeddings(
-                        model="models/text-embedding-004", 
-                        google_api_key=clean_api_key
-                    )
-                    emb_test.embed_query("test query")
-                    embeddings = emb_test
-                except Exception as e:
-                    st.error(f"❌ Google Embedding Error: {str(e)}")
+                # কাজ করে এমন Embedding মডেলগুলো পর পর চেক করা
+                candidate_models = ["models/embedding-001", "embedding-001", "text-embedding-004"]
+                
+                for m_name in candidate_models:
+                    try:
+                        emb_test = GoogleGenerativeAIEmbeddings(
+                            model=m_name, 
+                            google_api_key=clean_api_key
+                        )
+                        emb_test.embed_query("test query")
+                        embeddings = emb_test
+                        break
+                    except Exception:
+                        continue
 
-                if embeddings is not None:
+                if embeddings is None:
+                    st.error("❌ কোনো কার্যকরী Embedding মডেল পাওয়া যায়নি। আপনার API Key যাচাই করুন।")
+                else:
                     vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
                     vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
@@ -251,3 +257,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
+        
