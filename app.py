@@ -9,7 +9,7 @@ from typing import List
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
 try:
     from langchain.chains import create_history_aware_retriever, create_retrieval_chain
@@ -25,6 +26,32 @@ except ModuleNotFoundError:
     from langchain.chains.retrieval import create_retrieval_chain
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
+
+# --- Custom Gemini Native Embeddings Wrapper ---
+class CustomGeminiEmbeddings(Embeddings):
+    def __init__(self, api_key: str, model_name: str = "models/text-embedding-004"):
+        self.api_key = api_key.strip()
+        self.model_name = model_name
+        genai.configure(api_key=self.api_key)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        embeddings = []
+        for text in texts:
+            res = genai.embed_content(
+                model=self.model_name,
+                content=text,
+                task_type="retrieval_document"
+            )
+            embeddings.append(res['embedding'])
+        return embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        res = genai.embed_content(
+            model=self.model_name,
+            content=text,
+            task_type="retrieval_query"
+        )
+        return res['embedding']
 
 # --- Custom Bulletproof Hybrid Retriever ---
 class CustomHybridRetriever(BaseRetriever):
@@ -140,14 +167,11 @@ with st.sidebar:
                 embeddings = None
                 errors_log = []
                 
-                candidate_models = ["text-embedding-004", "models/text-embedding-004", "models/embedding-001", "embedding-001"]
+                candidate_models = ["models/text-embedding-004", "models/embedding-001"]
                 
                 for m_name in candidate_models:
                     try:
-                        emb_test = GoogleGenerativeAIEmbeddings(
-                            model=m_name, 
-                            google_api_key=clean_api_key
-                        )
+                        emb_test = CustomGeminiEmbeddings(api_key=clean_api_key, model_name=m_name)
                         emb_test.embed_query("test query")
                         embeddings = emb_test
                         break
@@ -260,4 +284,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-    
+        
