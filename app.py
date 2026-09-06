@@ -8,7 +8,7 @@ from fpdf import FPDF
 import openai
 from typing import List
 
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -129,7 +129,7 @@ with st.sidebar:
                 tmp_file.write(uploaded_pdf.read())
                 st.session_state.pdf_path = tmp_file.name
 
-            loader = PyPDFLoader(st.session_state.pdf_path)
+            loader = PyMuPDFLoader(st.session_state.pdf_path)
             docs = loader.load()
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             splits = text_splitter.split_documents(docs)
@@ -164,7 +164,6 @@ with st.sidebar:
                     temperature=0
                 )
 
-                # Pure LCEL Pipeline (Zero legacy chain dependencies)
                 rephrase_system_prompt = (
                     "Given a chat history and the latest user question "
                     "which might reference context in the chat history, "
@@ -275,4 +274,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-    
+        
