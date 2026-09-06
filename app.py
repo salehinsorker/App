@@ -20,15 +20,11 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 
-try:
-    from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-except ModuleNotFoundError:
-    from langchain.chains.history_aware_retriever import create_history_aware_retriever
-    from langchain.chains.retrieval import create_retrieval_chain
-
+# Clean LangChain 0.2+ / 0.3+ Chain Imports
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
-# --- Caching local CPU embedding model for 0-cost vectors ---
+# --- Caching local CPU embedding model ---
 @st.cache_resource
 def load_local_embeddings():
     return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-2")
@@ -155,10 +151,8 @@ with st.sidebar:
             else:
                 clean_api_key = openai_api_key.strip()
                 
-                # ১. লোকাল CPU এম্বেডিং লোড (OpenAI Token নষ্ট হবে না)
                 embeddings = load_local_embeddings()
                 
-                # ২. Vector/BM25 Indexing
                 vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
                 vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
@@ -167,7 +161,6 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                # ৩. OpenAI gpt-4o-mini LLM Integration
                 llm = ChatOpenAI(
                     model="gpt-4o-mini", 
                     openai_api_key=clean_api_key,
