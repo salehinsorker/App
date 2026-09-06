@@ -176,9 +176,9 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                # Groq-এর বর্তমানে অ্যাক্টিভ ও কার্যকরী টেক্সট মডেল
+                # Stable default model for all Groq API tiers
                 llm = ChatGroq(
-                    model="llama-3.3-70b-versatile", 
+                    model="llama3-70b-8192", 
                     groq_api_key=clean_api_key,
                     temperature=0,
                     max_retries=3
@@ -300,4 +300,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-        
+                        
