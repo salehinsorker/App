@@ -113,7 +113,7 @@ with st.sidebar:
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
     
-        if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
+    if uploaded_pdf and gemini_api_key and st.button("PDF প্রসেস করুন"):
         with st.spinner("PDF প্রসেস করা হচ্ছে..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_pdf.read())
@@ -187,7 +187,6 @@ with st.sidebar:
                     st.session_state.chat_history = []
                     st.success("Indexing সফল হয়েছে!")
 
-
 # --- Main Interface ---
 st.subheader("২. আপনার প্রশ্ন প্রদান করুন")
 
@@ -255,4 +254,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-        
+                                
