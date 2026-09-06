@@ -5,12 +5,12 @@ import fitz  # PyMuPDF
 import streamlit as st
 from PIL import Image
 from fpdf import FPDF
-import openai
+import groq
 from typing import List
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
@@ -44,8 +44,8 @@ class CustomHybridRetriever(BaseRetriever):
         return unique_docs[:4]
 
 # --- Streamlit UI Config ---
-st.set_page_config(page_title="Free OpenAI Multimodal RAG", page_icon="✨", layout="wide")
-st.title("✨ Free Multimodal Hybrid RAG Agent (Powered by OpenAI API)")
+st.set_page_config(page_title="Free Groq Multimodal RAG", page_icon="⚡", layout="wide")
+st.title("⚡ Free Multimodal Hybrid RAG Agent (Powered by Groq API)")
 
 # --- Session State Initialization ---
 if "rag_pipeline" not in st.session_state:
@@ -88,16 +88,16 @@ def generate_simple_pdf(text_content: str) -> io.BytesIO:
     buffer.seek(0)
     return buffer
 
-# --- Helper 3: Vision Question Extraction (OpenAI gpt-4o-mini) ---
+# --- Helper 3: Vision Question Extraction (Groq Vision) ---
 def extract_question_from_image(pil_image, api_key: str) -> str:
     try:
         buffered = io.BytesIO()
         pil_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
         
-        client = openai.OpenAI(api_key=api_key.strip())
+        client = groq.Groq(api_key=api_key.strip())
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.2-11b-vision-instruct",
             messages=[
                 {
                     "role": "user",
@@ -118,12 +118,12 @@ def extract_question_from_image(pil_image, api_key: str) -> str:
 
 # --- Sidebar Setup ---
 with st.sidebar:
-    st.header("🔑 ১. OpenAI API Key ও PDF আপলোড")
-    openai_api_key = st.text_input("OpenAI API Key দিন (sk-...)", type="password")
+    st.header("🔑 ১. Groq API Key ও PDF আপলোড")
+    groq_api_key = st.text_input("Groq API Key দিন (gsk-...)", type="password")
 
     uploaded_pdf = st.file_uploader("PDF ফাইল আপলোড করুন", type=["pdf"])
     
-    if uploaded_pdf and openai_api_key and st.button("PDF প্রসেস করুন"):
+    if uploaded_pdf and groq_api_key and st.button("PDF প্রসেস করুন"):
         with st.spinner("PDF প্রসেস করা হচ্ছে (Local Embedding)..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_pdf.read())
@@ -146,7 +146,7 @@ with st.sidebar:
             if not cleaned_splits:
                 st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
             else:
-                clean_api_key = openai_api_key.strip()
+                clean_api_key = groq_api_key.strip()
                 
                 embeddings = load_local_embeddings()
                 
@@ -158,9 +158,9 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                llm = ChatOpenAI(
-                    model="gpt-4o-mini", 
-                    openai_api_key=clean_api_key,
+                llm = ChatGroq(
+                    model="llama-3.3-70b-versatile", 
+                    groq_api_key=clean_api_key,
                     temperature=0
                 )
 
@@ -221,11 +221,11 @@ if uploaded_img:
     st.image(pil_img, caption="আপলোডকৃত ছবি", width=250)
     
     if st.button("ছবি থেকে প্রশ্ন বের করুন"):
-        if not openai_api_key:
-            st.error("দয়া করে সাইডবারে OpenAI API Key দিন।")
+        if not groq_api_key:
+            st.error("দয়া করে সাইডবারে Groq API Key দিন।")
         else:
-            with st.spinner("OpenAI Vision দিয়ে ছবি পড়া হচ্ছে..."):
-                extracted_image_question = extract_question_from_image(pil_img, openai_api_key)
+            with st.spinner("Groq Vision দিয়ে ছবি পড়া হচ্ছে..."):
+                extracted_image_question = extract_question_from_image(pil_img, groq_api_key)
                 st.info(f"📷 **ছবি থেকে সংগৃহীত প্রশ্ন:** {extracted_image_question}")
 
 for msg in st.session_state.messages:
@@ -236,8 +236,8 @@ user_input = st.chat_input("আপনার প্রশ্নটি এখা�
 query = user_input or (extracted_image_question if uploaded_img else None)
 
 if query:
-    if not openai_api_key:
-        st.error("দয়া করে সাইডবারে OpenAI API Key প্রদান করুন।")
+    if not groq_api_key:
+        st.error("দয়া করে সাইডবারে Groq API Key প্রদান করুন।")
     elif st.session_state.rag_pipeline is None:
         st.warning("দয়া করে সাইডবার থেকে প্রথমে একটি PDF প্রসেস করুন।")
     else:
@@ -274,4 +274,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-    
+            
