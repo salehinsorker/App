@@ -138,20 +138,54 @@ with st.sidebar:
             else:
                 clean_api_key = gemini_api_key.strip()
                 
+                                clean_api_key = gemini_api_key.strip()
                 embeddings = None
-                for model_name in ["models/text-embedding-004", "text-embedding-004", "models/embedding-001"]:
-                    try:
-                        emb_test = GoogleGenerativeAIEmbeddings(
-                            model=model_name, 
-                            google_api_key=clean_api_key
-                        )
-                        emb_test.embed_query("test query")
-                        embeddings = emb_test
-                        break
-                    except Exception:
-                        continue
+                
+                # সরাসরি আসল এরর ট্রেস করার ব্লক
+                try:
+                    emb_test = GoogleGenerativeAIEmbeddings(
+                        model="models/text-embedding-004", 
+                        google_api_key=clean_api_key
+                    )
+                    emb_test.embed_query("test query")
+                    embeddings = emb_test
+                except Exception as e:
+                    st.error(f"❌ Google Embedding Error: {str(e)}")
 
-                if embeddings is None:
+                if embeddings is not None:
+                    vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
+                    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+                    bm25_retriever = BM25Retriever.from_documents(cleaned_splits)
+                    bm25_retriever.k = 3
+
+                    hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
+
+                    llm = ChatGoogleGenerativeAI(
+                        model="gemini-1.5-flash", 
+                        google_api_key=clean_api_key,
+                        temperature=0
+                    )
+
+                    context_prompt = ChatPromptTemplate.from_messages([
+                        ("system", "Given a chat history and the latest user question, rephrase it to be a standalone question."),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
+                    history_aware_retriever = create_history_aware_retriever(llm, hybrid_retriever, context_prompt)
+
+                    qa_prompt = ChatPromptTemplate.from_messages([
+                        ("system", "Answer the question using ONLY the provided context below. If context doesn't contain the answer, say 'তথ্যটি PDF-এ পাওয়া যায়নি।'\n\n{context}"),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
+                    
+                    qa_chain = create_stuff_documents_chain(llm, qa_prompt)
+                    st.session_state.rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+                    st.session_state.messages = []
+                    st.session_state.chat_history = []
+                    st.success("Indexing সফল হয়েছে!")
+
                     st.error("❌ আপনার Gemini API Key-টি সঠিক নয় অথবা Embedding সার্ভিসের কোটা শেষ হয়ে গেছে। নতুন একটি API Key ব্যবহার করুন।")
                 else:
                     vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
