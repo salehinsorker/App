@@ -106,7 +106,7 @@ def generate_simple_pdf(text_content: str) -> io.BytesIO:
     buffer.seek(0)
     return buffer
 
-# --- Helper 3: Vision Question Extraction (Groq Vision) ---
+# --- Helper 3: Vision Question Extraction (Active Groq Vision Model) ---
 def extract_question_from_image(pil_image, api_key: str) -> str:
     try:
         buffered = io.BytesIO()
@@ -115,7 +115,7 @@ def extract_question_from_image(pil_image, api_key: str) -> str:
         
         client = groq.Groq(api_key=api_key.strip())
         response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",
+            model="llama-3.2-11b-vision-instruct",
             messages=[
                 {
                     "role": "user",
@@ -176,9 +176,9 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
-                # Stable default model for all Groq API tiers
+                # Active Groq Text Model
                 llm = ChatGroq(
-                    model="llama3-70b-8192", 
+                    model="llama-3.3-70b-versatile", 
                     groq_api_key=clean_api_key,
                     temperature=0,
                     max_retries=3
@@ -300,4 +300,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-                        
+        
