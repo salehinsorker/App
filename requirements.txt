@@ -9,5 +9,5 @@ rank_bm25
 langchain-community
 langchain-core
 langchain-text-splitters
-langchain-openai
-openai
+langchain-groq
+groq
