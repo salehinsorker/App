@@ -3,6 +3,8 @@ PyMuPDF
 pypdf
 fpdf2
 pillow
+torch
+torchvision
 sentence-transformers
 faiss-cpu
 rank_bm25
