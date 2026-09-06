@@ -158,10 +158,12 @@ with st.sidebar:
 
                 hybrid_retriever = CustomHybridRetriever(retrievers=[bm25_retriever, vector_retriever])
 
+                # High-speed model with max retries to avoid rate limit issues
                 llm = ChatGroq(
-                    model="llama-3.3-70b-versatile", 
+                    model="llama-3.1-8b-instant", 
                     groq_api_key=clean_api_key,
-                    temperature=0
+                    temperature=0,
+                    max_retries=3
                 )
 
                 rephrase_system_prompt = (
@@ -190,20 +192,26 @@ with st.sidebar:
                 qa_chain = qa_prompt | llm | StrOutputParser()
 
                 def run_rag_pipeline(query_text: str, history: List):
-                    if history:
-                        standalone_q = rephrase_chain.invoke({"input": query_text, "chat_history": history})
-                    else:
-                        standalone_q = query_text
-                    
-                    retrieved_docs = hybrid_retriever.invoke(standalone_q)
-                    context_str = "\n\n".join(d.page_content for d in retrieved_docs)
-                    
-                    answer_text = qa_chain.invoke({
-                        "context": context_str,
-                        "chat_history": history,
-                        "input": query_text
-                    })
-                    return {"answer": answer_text, "context": retrieved_docs}
+                    try:
+                        if history:
+                            standalone_q = rephrase_chain.invoke({"input": query_text, "chat_history": history})
+                        else:
+                            standalone_q = query_text
+                        
+                        retrieved_docs = hybrid_retriever.invoke(standalone_q)
+                        context_str = "\n\n".join(d.page_content for d in retrieved_docs)
+                        
+                        answer_text = qa_chain.invoke({
+                            "context": context_str,
+                            "chat_history": history,
+                            "input": query_text
+                        })
+                        return {"answer": answer_text, "context": retrieved_docs}
+                    except Exception as e:
+                        return {
+                            "answer": f"⚠️ Groq API থেকে উত্তর আনতে সমস্যা হয়েছে। কারণ: {str(e)}\n\nদয়া করে কিছুক্ষণ পর আবার চেষ্টা করুন।",
+                            "context": []
+                        }
 
                 st.session_state.rag_pipeline = run_rag_pipeline
                 st.session_state.messages = []
@@ -274,4 +282,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-        
+    
