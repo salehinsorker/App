@@ -119,32 +119,40 @@ with st.sidebar:
                 tmp_file.write(uploaded_pdf.read())
                 st.session_state.pdf_path = tmp_file.name
 
-            loader = PyPDFLoader(st.session_state.pdf_path)
-            docs = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
-            splits = text_splitter.split_documents(docs)
+                        # ১. টেক্সট ক্লিন এবং স্যানিটাইজ করা
+            cleaned_splits = []
+            for doc in splits:
+                text = doc.page_content.strip()
+                if text:
+                    clean_text = text.encode("utf-8", "ignore").decode("utf-8")
+                    doc.page_content = clean_text
+                    cleaned_splits.append(doc)
 
-            splits = [doc for doc in splits if doc.page_content and doc.page_content.strip()]
-
-            if not splits:
+            if not cleaned_splits:
                 st.error("PDF থেকে কোনো পড়ার মতো টেক্সট পাওয়া যায়নি।")
             else:
                 clean_api_key = gemini_api_key.strip()
                 
-                try:
-                    embeddings = GoogleGenerativeAIEmbeddings(
-                        model="models/text-embedding-004", 
-                        google_api_key=clean_api_key
-                    )
-                    vectorstore = FAISS.from_documents(splits, embeddings)
-                except Exception:
-                    embeddings = GoogleGenerativeAIEmbeddings(
-                        model="models/embedding-001", 
-                        google_api_key=clean_api_key
-                    )
-                    vectorstore = FAISS.from_documents(splits, embeddings)
+                # ২. Embedding মডেল এবং API Key যাচাই
+                embeddings = None
+                for model_name in ["models/text-embedding-004", "text-embedding-004", "models/embedding-001"]:
+                    try:
+                        emb_test = GoogleGenerativeAIEmbeddings(
+                            model=model_name, 
+                            google_api_key=clean_api_key
+                        )
+                        emb_test.embed_query("test query")  # API Key টেস্ট
+                        embeddings = emb_test
+                        break
+                    except Exception:
+                        continue
 
-                vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+                if embeddings is None:
+                    st.error("❌ আপনার Gemini API Key-টি সঠিক নয় অথবা Embedding সার্ভিসের কোটা শেষ হয়ে গেছে। দয়া করে Google AI Studio থেকে নতুন একটি API Key তৈরি করে চেষ্টা করুন।")
+                else:
+                    vectorstore = FAISS.from_documents(cleaned_splits, embeddings)
+                    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
 
                 bm25_retriever = BM25Retriever.from_documents(splits)
                 bm25_retriever.k = 3
