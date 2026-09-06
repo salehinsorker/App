@@ -97,7 +97,7 @@ def extract_question_from_image(pil_image, api_key: str) -> str:
         
         client = groq.Groq(api_key=api_key.strip())
         response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-instruct",
+            model="llama-3.2-11b-vision-preview",
             messages=[
                 {
                     "role": "user",
@@ -274,4 +274,4 @@ if query:
             HumanMessage(content=query),
             AIMessage(content=answer)
         ])
-            
+        
